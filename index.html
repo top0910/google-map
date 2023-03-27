@@ -1,0 +1,902 @@
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>
+    Map
+  </title>
+  <style>
+    html,
+    body,
+    #viewDiv {
+      padding: 0;
+      margin: 0;
+      height: 100%;
+      width: 100%;
+    }
+
+    #mainWindow {
+      padding: .5em;
+      background-color: #fff;
+    }
+
+    #mainWindow p,
+    #uploadForm {
+      display: block;
+      padding: .1em;
+    }
+
+    .background-white {
+      background-color: #fff;
+    }
+  </style>
+  
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700" />
+  <link rel="stylesheet" href="https://js.arcgis.com/4.25/esri/themes/light/main.css" />
+  <script src="https://js.arcgis.com/4.25/"></script>
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.1/jquery.min.js"></script>
+
+  
+  <link href="assets/plugins/custom/fullcalendar/fullcalendar.bundle.css" rel="stylesheet" type="text/css" />
+  <!--end::Page Vendors Styles-->
+  <!--begin::Global Theme Styles(used by all pages)-->
+  <link href="assets/plugins/global/plugins.bundle.css" rel="stylesheet" type="text/css" />
+  <link href="assets/plugins/custom/prismjs/prismjs.bundle.css" rel="stylesheet" type="text/css" />
+  <link href="assets/css/style.bundle.css" rel="stylesheet" type="text/css" />
+  <!--end::Global Theme Styles-->
+  <!--begin::Layout Themes(used by all pages)-->
+  <link href="assets/css/themes/layout/header/base/light.css" rel="stylesheet" type="text/css" />
+  <link href="assets/css/themes/layout/header/menu/light.css" rel="stylesheet" type="text/css" />
+  <link href="assets/css/themes/layout/brand/dark.css" rel="stylesheet" type="text/css" />
+  <link href="assets/css/themes/layout/aside/dark.css" rel="stylesheet" type="text/css" />
+  <!--end::Layout Themes-->
+  <link rel="shortcut icon" href="assets/media/logos/favicon.ico" />
+  <script>
+    require([
+      "esri/config",
+      "esri/Map",
+      "esri/views/MapView",
+      "esri/widgets/Expand",
+      "esri/request",
+      "esri/layers/FeatureLayer",
+      "esri/layers/support/Field",
+      "esri/Graphic",
+      "esri/widgets/BasemapToggle",
+      "esri/widgets/BasemapGallery",
+      "esri/widgets/LayerList",
+      "esri/geometry/geometryEngine",
+      "esri/layers/GraphicsLayer",
+      "esri/geometry/Point",
+      "esri/geometry/support/geodesicUtils"
+    ], (
+      esriConfig,
+      Map,
+      MapView,
+      Expand,
+      request,
+      FeatureLayer,
+      Field,
+      Graphic,
+      BasemapToggle,
+      BasemapGallery,
+      LayerList,
+      geometryEngine, 
+      GraphicsLayer,
+      Point,
+      geodesicUtils,
+      SpatialReference
+    ) => {
+      const portalUrl = "https://www.arcgis.com";
+
+      document
+        .getElementById("uploadForm")
+        .addEventListener("change", (event) => {
+          const fileName = event.target.value.toLowerCase();
+
+          if (fileName.indexOf(".zip") !== -1) {
+            //is file a zip - if not notify user
+            generateFeatureCollection(fileName);
+          } else {
+            document.getElementById("upload-status").innerHTML =
+              '<p style="color:red">Add shapefile as .zip file</p>';
+          }
+        });
+
+      esriConfig.apiKey = "Your Key File";
+      const fileForm = document.getElementById("mainWindow");
+      const shapeList = document.getElementById("shapeList");
+      const lengthModal = document.getElementById("lengthModal");
+      let glboal_selectedIndex = -1;
+
+      const map = new Map({
+        basemap: "arcgis-imagery" //Basemap layer service
+      });
+
+      const view = new MapView({
+        center: [-41.647, 36.41],
+        zoom: 5,
+        map: map,
+        container: "viewDiv",
+        popup: {
+          defaultPopupTemplateEnabled: true
+        }
+      });
+
+      let sourceGraphics = [];
+      let boundary_info = []
+      view.when(() => {
+        //uploading Expand
+        const uploadExpand = new Expand({
+          expandIconClass: "esri-icon-upload",
+          view: view,
+          content: fileForm
+        });
+        view.ui.add(uploadExpand, "top-right");
+
+        const layerListExpand = new Expand({
+          expandIconClass: "esri-icon-layer-list",
+          view: view,
+          content: shapeList,
+        });
+        view.ui.add(layerListExpand, "top-right");
+
+        const basemapGallery = new BasemapGallery({
+          view: view,
+          source: {
+            query: {
+              title: '"World Basemaps for Developers" AND owner:esri'
+            }
+          }
+        });
+        const baseMapSelect = new Expand({
+          expandIconClass: "esri-icon-basemap",
+          view: view,
+          content: basemapGallery
+        });
+
+        view.ui.add(baseMapSelect, "top-right");
+
+        const lengthInput = new Expand({
+          expandIconClass: "esri-icon-edit",
+          view: view,
+          content: lengthModal
+        });
+        view.ui.add(lengthInput, "top-right");
+
+        map.removeAll();
+        sourceGraphics = [];
+
+        const table = $("<table style='border: 1px solid;' id='shapeTable'></table>");
+        $("#shapeList").append(table);
+      });
+      
+      /* $("#calc").on('click', function(){
+        if (glboal_selectedIndex === -1)
+        {
+          alert("Select Area!");
+          return;
+        }
+        let length = $("#length").val();
+        const geodesicArea = geometryEngine.geodesicArea(sourceGraphics[glboal_selectedIndex].geometry, "square-feet");
+        // alert("Value: " + (geodesicArea / length).toFixed(2));
+        $("#dist_result").html((geodesicArea / length).toFixed(2) + ' feet')
+
+        console.log(view);
+      }); */
+
+      function generateFeatureCollection(fileName) {
+
+        //remove all layers.
+
+        let name = fileName.split(".");
+        // Chrome adds c:\fakepath to the value - we need to remove it
+        name = name[0].replace("c:\\fakepath\\", "");
+
+        document.getElementById("upload-status").innerHTML =
+          "<b>Loading </b>" + name;
+
+        // define the input params for generate see the rest doc for details
+        // https://developers.arcgis.com/rest/users-groups-and-items/generate.htm
+        const params = {
+          name: name,
+          targetSR: view.spatialReference,
+          maxRecordCount: 1000,
+          enforceInputFileSizeLimit: true,
+          enforceOutputJsonSizeLimit: true
+        };
+
+        // generalize features to 10 meters for better performance
+        params.generalize = true;
+        params.maxAllowableOffset = 10;
+        params.reducePrecision = true;
+        params.numberOfDigitsAfterDecimal = 0;
+
+        const myContent = {
+          filetype: "shapefile",
+          publishParameters: JSON.stringify(params),
+          f: "json"
+        };
+
+        // use the REST generate operation to generate a feature collection from the zipped shapefile
+        request(portalUrl + "/sharing/rest/content/features/generate", {
+          query: myContent,
+          body: document.getElementById("uploadForm"),
+          responseType: "json"
+        })
+          .then((response) => {
+            boundary_info.push(response.data.featureCollection.layers[0].featureSet.features)
+            const layerName =
+              response.data.featureCollection.layers[0].layerDefinition.name;
+            document.getElementById("upload-status").innerHTML =
+              "<b>Loaded: </b>" + layerName;
+            addShapefileToMap(response.data.featureCollection, name);
+          })
+          .catch(errorHandler);
+      }
+
+      function errorHandler(error) {
+        document.getElementById("upload-status").innerHTML =
+          "<p style='color:red;max-width: 500px;'>" + error.message + "</p>";
+      }
+
+      function selectedClear() {
+        $("#shapeTable").children("tr").each(function () { $(this).removeClass("selected"); });
+      };
+
+      function addShapefileToMap(featureCollection, fileName) {
+        // add the shapefile to the map and zoom to the feature collection extent
+        // if you want to persist the feature collection when you reload browser, you could store the
+        // collection in local storage by serializing the layer using featureLayer.toJson()
+        // see the 'Feature Collection in Local Storage' sample for an example of how to work with local storag        
+        const table = $("#shapeTable");
+        let selectedIndex = 0;
+        let farmIndex = 0;
+        const colors = [[255, 0, 0, 0.7], [0, 255, 0, 0.7], [0, 0, 255, 0.7]];
+        const layers = featureCollection.layers.map((layer, index) => {
+          boundary_info[0].map((item) => {
+            const tr = $(`<tr><td>${item.attributes.FIELD_NAME.trim()}</td></tr>`);
+            table.append(tr);
+            if (index === 0) {
+              selectedClear(table);
+              tr.addClass("selected");
+              selectedIndex = tr.index();
+            }
+          });
+
+          let featureRenderer = {
+            type: "simple",  // autocasts as new SimpleRenderer()
+            symbol: {
+              type: "simple-fill",  // autocasts as new SimpleMarkerSymbol()
+              size: 6,
+              color: colors[0],
+              style: "none"
+            }
+          };
+
+          const graphics = layer.featureSet.features.map((feature) => {
+            return Graphic.fromJSON(feature);
+          });
+
+          // console.log(graphics)
+
+          sourceGraphics = sourceGraphics.concat(graphics);
+          const featureLayer = new FeatureLayer({
+            objectIdField: "FID",
+            renderer: featureRenderer,
+            source: graphics,
+            fields: layer.layerDefinition.fields.map((field) => {
+              return Field.fromJSON(field);
+            })
+          });
+          
+          return featureLayer;
+          // associate the feature with the popup on click to enable highlight and zoom to
+        });
+
+        map.addMany(layers);
+
+        const drawRay = (curGeometry, curColor) => {
+          const newLayer = JSON.parse(JSON.stringify(featureCollection.layers[0]));
+          // newLayer.layerDefinition.name = "aaaaaaaaa";
+          // newLayer.featureSet.features[0].geometry.rings[0][0][1] += 2000;
+          // console.log(newLayer, featureCollection.layers[0]);
+
+          newLayer.featureSet.features[0].geometry.rings[0] = curGeometry;
+
+          let newfeatureRenderer = {
+              type: "simple",  // autocasts as new SimpleRenderer()
+              symbol: {
+                type: "simple-fill",  // autocasts as new SimpleMarkerSymbol()
+                size: 6,
+                color: curColor,
+                style: "solid"
+              }
+          };
+
+          newLayer.featureSet.features.splice(1);
+          const newGraphics = newLayer.featureSet.features.map((feature) => {
+              return Graphic.fromJSON(feature);
+          });
+          const newfeatureLayer = new FeatureLayer({
+              objectIdField: "FID",
+              renderer: newfeatureRenderer,
+              source: newGraphics,
+              fields: newLayer.layerDefinition.fields.map((field) => {
+                return Field.fromJSON(field);
+              })
+          });
+
+          // map.addMany([...layers, newfeatureLayer]);
+          map.add(newfeatureLayer);
+        }
+        const getRoundInPixel = (geo) => {
+          geo[geo.length] = geo[0];
+          var res = 0;
+          for(var i = 1 ; i < geo.length ; i ++)
+          {
+            var xd = geo[i][0] - geo[i - 1][0];
+            var yd = geo[i][1] - geo[i - 1][1];
+            var ld = Math.sqrt(xd * xd + yd * yd);
+            res += ld;
+          }
+          geo.splice(geo.length - 1, 1);
+          return res;
+        }
+        const checkIntersectY = (start, end, Y) => {
+          return (end[1] - Y) * (start[1] - Y) < 0/* && Math.abs(start[0] - end[0]) > eps */;
+        }
+        const checkIntersectX = (start, end, X) => {
+          return (end[0] - X) * (start[0] - X) < 0/* && Math.abs(start[1] - end[1]) > eps */;
+        }
+        const getXFromY = (start, end, Y) => {
+          if(end[0] === start[0]) return start[0];
+          const A = (end[1] - start[1]) / (end[0] - start[0]);
+          const X = (Y - start[1] + A * start[0]) / A;
+          return X;
+        }
+        const getYFromX = (start, end, X) => {
+          // if(end[0] === start[0]) return start[0];
+          const A = (end[1] - start[1]) / (end[0] - start[0]);
+          const Y = A * (X - start[0]) + start[1];
+          return Y;
+        }
+        const spliceByY = (geo, Y, dir) => {
+          if(geo.length == 0) return geo;
+          geo[geo.length] = geo[0];
+          const spliceGeometry = [];
+          for(var i = 0 ; i < geo.length ; i ++)
+          {
+            if(i && checkIntersectY(geo[i - 1], geo[i], Y))
+            {
+              const X = getXFromY(geo[i - 1], geo[i], Y);
+              spliceGeometry.push([X, Y]);
+              // console.log([X, Y]);
+            }
+            if(Y * dir - geo[i][1] * dir > -eps) spliceGeometry.push(geo[i]);
+          }
+          geo.splice(geo.length - 1, 1);
+          return spliceGeometry;
+        }
+        const spliceByX = (geo, X, dir) => {
+          if(geo.length == 0) return geo;
+          geo[geo.length] = geo[0];
+          const spliceGeometry = [];
+          for(var i = 0 ; i < geo.length ; i ++)
+          {
+            if(i && checkIntersectX(geo[i - 1], geo[i], X))
+            {
+              const Y = getYFromX(geo[i - 1], geo[i], X);
+              spliceGeometry.push([X, Y]);
+              // console.log([X, Y]);
+            }
+            if(X * dir - geo[i][0] * dir > -eps) spliceGeometry.push(geo[i]);
+          }
+          geo.splice(geo.length - 1, 1);
+          return spliceGeometry;
+        }
+        const getSpliceGeometry = (geo, X1, X2, Y1, Y2) => {
+          var spliceResult = JSON.parse(JSON.stringify(geo));
+          spliceResult = spliceByY(spliceResult, Y1, 1);
+          // console.log("1", spliceResult);
+          spliceResult = spliceByY(spliceResult, Y2, -1);
+          // console.log("2", spliceResult);
+          spliceResult = spliceByX(spliceResult, X1, -1);
+          // console.log("3", spliceResult);
+          spliceResult = spliceByX(spliceResult, X2, 1);
+          // console.log("4", spliceResult);
+          return spliceResult;
+        }
+        const IntersectPointsByY = (geo, Y) => {
+          geo[geo.length] = geo[0];
+          var points = [];
+          for(var i = 0 ; i < geo.length ; i ++)
+          {
+            if(i && checkIntersectY(geo[i - 1], geo[i], Y))
+            {
+              const X = getXFromY(geo[i - 1], geo[i], Y);
+              points.push([X, Y]);
+            }
+          }
+          geo.splice(geo.length - 1, 1);
+          return points;
+        }
+        const IntersectPointsByX = (geo, X) => {
+          geo[geo.length] = geo[0];
+          var points = [];
+          for(var i = 0 ; i < geo.length ; i ++)
+          {
+            if(i && checkIntersectX(geo[i - 1], geo[i], X))
+            {
+              const Y = getYFromX(geo[i - 1], geo[i], X);
+              points.push([X, Y]);
+            }
+          }
+          geo.splice(geo.length - 1, 1);
+          return points;
+        }
+        const getTopPoint = (geo, top) => {
+          for(var i = 0 ; i < geo.length ; i ++)
+          {
+            if(geo[i][1] == top)
+              return i;
+          }
+        }
+        const getLeftPoint = (geo, left) => {
+          for(var i = 0 ; i < geo.length ; i ++)
+          {
+            if(geo[i][0] == left)
+              return i;
+          }
+        }
+
+        // drawRay(getSpliceGeometry(curGeometry, -12230804.53233948,-12228233.44652588,6725493.893664524,6725452.244720437), colors[0]);
+
+        const sampleWidth = 6.56168;
+        const eps = 0.0000000001;
+
+        $('#calc').click(function() {
+          const drawFeature = (fid, idx = 0) => {
+            const curGeometry = featureCollection.layers[0].featureSet.features[fid].geometry.rings[idx];
+            console.log(featureCollection);
+
+            // drawRay(curGeometry, colors[0]);
+            // curGeometry.splice(0, 10);
+            // drawRay(curGeometry, colors[1]);
+
+            var firstPoint = new Point(curGeometry[0]);
+            var secondPoint = new Point(curGeometry[1]);
+            var distanceUnits = "feet";
+            var distanceResult = geodesicUtils.geodesicDistance(firstPoint, secondPoint, distanceUnits);
+            // console.log("distance", distanceResult.distance, distanceUnits);
+            var coordinateToFeet = distanceResult.distance;
+            var feetToCoordinate = 1 / distanceResult.distance;
+
+            var top, left, bottom, right;
+            // console.log(curGeometry.length);
+            for(var i = 0 ; i < curGeometry.length ; i ++)
+            {
+              if(!top || top > curGeometry[i][1]) top = curGeometry[i][1];
+              if(!bottom || bottom < curGeometry[i][1]) bottom = curGeometry[i][1];
+              if(!left || left > curGeometry[i][0]) left = curGeometry[i][0];
+              if(!right || right < curGeometry[i][0]) right = curGeometry[i][0];
+            }
+            console.log(curGeometry);
+            console.log(top, left, bottom, right);
+
+            var pxLength = getRoundInPixel(curGeometry);
+            var feLength = geometryEngine.geodesicLength(sourceGraphics[0].geometry, "feet");
+            var tractor = $("#length").val();
+            var pxTractor = tractor / feLength * pxLength;
+            var row = Math.ceil((right - left) / pxTractor);
+            var col = Math.ceil((bottom - top) / pxTractor);
+            var pathLength = 0;
+            if($('#direction').val() == '1')
+            {
+              var visit = [];
+              var graph = [];
+              var ptsByY = [];
+              var yCount = 0;
+              var pts = [];
+              var ptsCount = 0;
+              var cnt = 0;
+              var graph = [];
+              var visit = [];
+
+              // drawRay(spliceByY(curGeometry, top + pxTractor, 1), colors[2]);
+
+              for(var tmpTop = top ; tmpTop < bottom ; tmpTop += pxTractor)
+              {
+                ptsByY[yCount] = [];
+                var interPoints = IntersectPointsByY(curGeometry, tmpTop);
+                interPoints.sort((a, b) => {
+                  if(a[0] === b[0]) return 0;
+                  return a[0] < b[0] ? -1 : 1;
+                });
+                if(interPoints.length > 2) console.log(tmpTop, interPoints);
+                for(var i = 0 ; i < interPoints.length ; i += 2)
+                {
+                  const curStart = interPoints[i][0];
+                  const curEnd = interPoints[i + 1][0];
+                  pathLength += Math.abs(curEnd - curStart);
+                  // const spGeo = getSpliceGeometry(curGeometry, curStart, curEnd, tmpTop + 5, tmpTop);
+                  pts[ptsCount] = [tmpTop, curStart, curEnd];
+                  ptsByY[yCount].push(ptsCount);
+                  graph[ptsCount] = [];
+                  ptsCount ++;
+                  // console.log(curStart, curEnd, tmpTop + pxTractor, tmpTop);
+                  // console.log(spGeo);
+                  // drawRay(spGeo, colors[cnt % 3]);
+                  cnt ++;
+                }
+                yCount ++;
+                // cnt ++;
+                // if(cnt == 1) break ;
+              }
+
+              for(var i = 1 ; i < yCount ; i ++)
+              {
+                for(var j = 0 ; j < ptsByY[i - 1].length ; j ++)
+                {
+                  var startItem = ptsByY[i - 1][j];
+                  for(var k = 0 ; k < ptsByY[i].length ; k ++)
+                  {
+                    var endItem = ptsByY[i][k];
+                    if(pts[startItem][1] > pts[endItem][2] || pts[startItem][2] < pts[endItem][1]) continue ;
+                    graph[startItem].push(endItem);
+                  }
+                }
+              }
+
+              // console.log(graph);
+
+              var order = [];
+
+              const dfs = (num) => {
+                visit[num] = 1;
+                order.push(num);
+
+                for(var tt = 0 ; tt < graph[num].length ; tt ++)
+                {
+                  if(visit[graph[num][tt]]) continue ;
+                  dfs(graph[num][tt]);
+                }
+              }
+
+              for(var i = 0 ; i < ptsCount ; i ++)
+              {
+                if(!visit[i])
+                {
+                  dfs(i);
+                }
+              }
+              // $('#startpoint').val('(' + Math.floor(pts[order[0]][1]) + ',' + Math.floor(pts[order[0]][0] + pxTractor) + ')');
+              var heading = $("#direction").val() == 1 ? "0" : "90"
+              var out_latitude = MetersToLatLon(Math.floor(pts[order[0]][1]), Math.floor(pts[order[0]][0] + pxTractor))[0], out_longitude = MetersToLatLon(Math.floor(pts[order[0]][1]), Math.floor(pts[order[0]][0] + pxTractor))[1]
+              if(idx === 0)
+              {
+                $("#coordinate_table").append(
+                  `<tr>
+                    <td>${boundary_info[0][fid].attributes.FIELD_NAME.trim()}</td>
+                    <td>${boundary_info[0][fid].attributes.FARM_NAME.trim()}</td>
+                    <td>${heading}</td>
+                    <td>${out_latitude}</td>
+                    <td>${out_longitude}</td>
+                    <td id="dist_result${fid}"></td>
+                  </tr>`
+                )
+              }
+              var i = 0;
+              var no = 0;
+              var colorNumber = 0;
+              var myTimer = setInterval(() => {
+                const num = order[i];
+                const curStart = pts[num][1];
+                const curEnd = pts[num][2];
+                const tmpTop = pts[num][0];
+                const spGeo = getSpliceGeometry(curGeometry, curStart + pxTractor, curEnd - pxTractor, tmpTop + 5, tmpTop);
+                drawRay(spGeo, colors[colorNumber % 3]);
+                if(graph[num].length) {
+                  if(no % 2 == 1)
+                  {
+                    const vGeo = getSpliceGeometry(curGeometry, curStart + pxTractor, curStart + pxTractor + 5, tmpTop + pxTractor, tmpTop);
+                    drawRay(vGeo, colors[colorNumber % 3]);
+                  }
+                  else
+                  {
+                    const vGeo = getSpliceGeometry(curGeometry, curEnd - pxTractor - 5, curEnd - pxTractor, tmpTop + pxTractor, tmpTop);
+                    drawRay(vGeo, colors[colorNumber % 3]);
+                  }
+                  no ++;
+                } else no = 0, colorNumber ++;
+                i ++;
+                if(i == order.length)
+                {
+                  clearInterval(myTimer);
+                  // view.goTo(sourceGraphics[fid + 1]);
+                  // drawFeature(fid + 1);
+                }
+              }, 100);
+            }
+            else
+            {
+              var visit = [];
+              var graph = [];
+              var ptsByX = [];
+              var xCount = 0;
+              var pts = [];
+              var ptsCount = 0;
+              var cnt = 0;
+              var graph = [];
+              var visit = [];
+
+              // drawRay(spliceByY(curGeometry, top + pxTractor, 1), colors[2]);
+
+              for(var tmpLeft = left ; tmpLeft < right ; tmpLeft += pxTractor)
+              {
+                ptsByX[xCount] = [];
+                var interPoints = IntersectPointsByX(curGeometry, tmpLeft);
+                interPoints.sort((a, b) => {
+                  if(a[1] === b[1]) return 0;
+                  return a[1] < b[1] ? -1 : 1;
+                });
+                // console.log(tmpLeft, interPoints.length);
+                for(var i = 0 ; i < interPoints.length ; i += 2)
+                {
+                  const curStart = interPoints[i][1];
+                  const curEnd = interPoints[i + 1][1];
+                  pathLength += Math.abs(curEnd - curStart);
+                  // const spGeo = getSpliceGeometry(curGeometry, curStart, curEnd, tmpLeft + 5, tmpLeft);
+                  pts[ptsCount] = [tmpLeft, curStart, curEnd];
+                  ptsByX[xCount].push(ptsCount);
+                  graph[ptsCount] = [];
+                  ptsCount ++;
+                  // console.log(curStart, curEnd, tmpLeft + pxTractor, tmpLeft);
+                  // console.log(spGeo);
+                  // drawRay(spGeo, colors[cnt % 3]);
+                  cnt ++;
+                }
+                xCount ++;
+                // cnt ++;
+                // if(cnt == 1) break ;
+              }
+
+              for(var i = 1 ; i < xCount ; i ++)
+              {
+                for(var j = 0 ; j < ptsByX[i - 1].length ; j ++)
+                {
+                  var startItem = ptsByX[i - 1][j];
+                  for(var k = 0 ; k < ptsByX[i].length ; k ++)
+                  {
+                    var endItem = ptsByX[i][k];
+                    if(pts[startItem][1] > pts[endItem][2] || pts[startItem][2] < pts[endItem][1]) continue ;
+                    graph[startItem].push(endItem);
+                  }
+                }
+              }
+
+              // console.log(graph);
+
+              var order = [];
+
+              const dfs = (num) => {
+                visit[num] = 1;
+                order.push(num);
+
+                for(var tt = 0 ; tt < graph[num].length ; tt ++)
+                {
+                  if(visit[graph[num][tt]]) continue ;
+                  dfs(graph[num][tt]);
+                }
+              }
+
+              for(var i = 0 ; i < ptsCount ; i ++)
+              {
+                if(!visit[i])
+                {
+                  dfs(i);
+                }
+              }
+
+              // console.log(order);
+              // $('#startpoint').val('(' + Math.floor(pts[order[0]][0]) + ',' + Math.floor(pts[order[0]][2]) + ')');
+              var heading = $("#direction").val() == 1 ? "0" : "90"
+              var out_latitude = MetersToLatLon(Math.floor(pts[order[0]][1]), Math.floor(pts[order[0]][0] + pxTractor))[0], out_longitude = MetersToLatLon(Math.floor(pts[order[0]][1]), Math.floor(pts[order[0]][0] + pxTractor))[1]
+              if(idx === 0)
+              {
+                $("#coordinate_table").append(
+                  `<tr>
+                    <td>${boundary_info[0][fid].attributes.FIELD_NAME.trim()}</td>
+                    <td>${boundary_info[0][fid].attributes.FARM_NAME.trim()}</td>
+                    <td>${heading}</td>
+                    <td>${out_latitude}</td>
+                    <td>${out_longitude}</td>
+                    <td id="dist_result${fid}"></td>
+                  </tr>`
+                )
+              }
+              var i = 0;
+              var no = 0;
+              var colorNumber = 0;
+              var myTimer = setInterval(() => {
+                const num = order[i];
+                const curStart = pts[num][1];
+                const curEnd = pts[num][2];
+                const tmpLeft = pts[num][0];
+                const spGeo = getSpliceGeometry(curGeometry, tmpLeft, tmpLeft + 5, curEnd - pxTractor, curStart + pxTractor);
+                drawRay(spGeo, colors[colorNumber % 3]);
+                if(graph[num].length) {
+                  if(no % 2 == 1)
+                  {
+                    const vGeo = getSpliceGeometry(curGeometry, tmpLeft, tmpLeft + pxTractor, curEnd - pxTractor, curEnd - pxTractor - 5);
+                    drawRay(vGeo, colors[colorNumber % 3]);
+                  }
+                  else
+                  {
+                    const vGeo = getSpliceGeometry(curGeometry, tmpLeft, tmpLeft + pxTractor, curStart + pxTractor + 5, curStart + pxTractor);
+                    drawRay(vGeo, colors[colorNumber % 3]);
+                  }
+                  no ++;
+                } else no = 0, colorNumber ++;
+                i ++;
+                if(i == order.length)
+                {
+                  clearInterval(myTimer);
+                  // view.goTo(sourceGraphics[fid + 1]);
+                  // drawFeature(fid + 1);
+                }
+              }, 100);
+            }
+            if(!idx) $("#dist_result" + fid).html(Math.floor(pathLength / pxLength * feLength) + ' feet');
+            else $("#dist_result" + fid).html($("#dist_result" + fid).html() + ',' + Math.floor(pathLength / pxLength * feLength) + ' feet');
+            if(idx + 1 < featureCollection.layers[0].featureSet.features[fid].geometry.rings.length)
+            {
+              drawFeature(fid, idx + 1);
+            }
+          }
+          //for(let i = 0 ; i < featureCollection.layers[0].featureSet.features.length ; i ++)
+          //  drawFeature(i);
+          console.log(glboal_selectedIndex);
+          drawFeature(glboal_selectedIndex);
+          // view.goTo(sourceGraphics[2]);
+        }) 
+        // console.log("top&left", curGeometry[leftId], curGeometry[topId]);
+
+        // console.log(row, col);
+
+        // const Y1 = (bottom - top) / 3 * 2 + top;
+        // const Y2 = (bottom - top) / 3 + top;
+        // const X1 = (right - left) / 3 * 2 + left;
+        // const X2 = (right - left) / 3 + left;
+
+        // console.log("X12Y12", X1, X2, Y1, Y2);
+
+        // drawRay(getSpliceGeometry(curGeometry, X1, X2, Y1, Y2), colors[0]);
+
+        const longitude = sourceGraphics[selectedIndex].geometry.centroid.longitude;
+        const latitude = sourceGraphics[selectedIndex].geometry.centroid.latitude;
+
+        const graphicsLayer = new GraphicsLayer();
+        map.add(graphicsLayer);
+
+        // Create a line geometry
+        const polyline = {
+            type: "polyline",
+            paths: [
+                [longitude + 0.001, latitude],
+                [longitude, latitude],
+                [longitude - 0.001, latitude]
+            ]
+        };
+        const simpleLineSymbol = {
+            type: "simple-line",
+            color: [226, 119, 40], // Orange
+            width: view.zoom
+        };
+
+        const polylineGraphic = new Graphic({
+            geometry: polyline,
+            symbol: simpleLineSymbol
+        });
+
+        setTimeout(() => {
+          // graphicsLayer.add(polylineGraphic);
+        }, 2000);
+
+        view.goTo(sourceGraphics[selectedIndex]);
+        glboal_selectedIndex = 0;
+
+        document.getElementById("upload-status").innerHTML = "";
+
+        table.on('click', 'tr', function (event) {
+          selectedClear();
+          $(this).addClass("selected");
+          glboal_selectedIndex = $(this).index();
+          view.goTo(sourceGraphics[$(this).index()]);
+        });
+
+        table.on('dblclick', 'tr', function (event) {
+          var polygons = [];
+
+          console.log(sourceGraphics[$(this).index()].geometry);
+          const geodesicArea = geometryEngine.geodesicArea(sourceGraphics[$(this).index()].geometry, "square-feet");
+          const geodesicLength = geometryEngine.geodesicLength(sourceGraphics[$(this).index()].geometry, "feet");
+          alert("Area: " + geodesicArea.toFixed(2) + " Length: " + geodesicLength.toFixed(2));
+
+        });
+      }
+    });
+    function copyAll() {
+
+    }
+
+    function MetersToLatLon(x, y) {
+      var PI = 3.14159
+      var originShift = 2.0 * PI * 6378137.0 / 2.0;
+
+      var lon = (x / originShift) * 180.0;
+      var lat = (y / originShift) * 180.0;
+
+      lat = 180.0 / PI * (2.0 * Math.atan( Math.exp( lat * PI / 180.0)) - PI / 2.0);
+      return [lat, lon];
+  }
+  </script>
+</head>
+
+<body>
+  <div id="mainWindow">
+    <div style="padding-left:4px;">
+      <form enctype="multipart/form-data" method="post" id="uploadForm">
+        <div class="field">
+          <label class="file-upload">
+            <span><strong>Add File</strong></span>
+            <input class="form-control" style="width: 250px; height: 45px;" type="file" name="file" id="inFile" />
+          </label>
+          <div></div>
+        </div>
+      </form>
+      <div id="shapeList" class="background-white" style="width: 200px; padding: 10px;">
+      </div>
+      <div id="lengthModal" class="form-group background-white p-2">
+        <div style="width: 200px;"  class="input-group pb-1">
+          <input type="text" class="form-control" placeholder="Vehicle Width" id="length" value="85">
+          <div class="input-group-append">
+            <span class="input-group-text">(feet)
+            </span>
+          </div>
+        </div>
+        <select class="form-control mb-1" id="direction" style="width: 200px;">
+          <option value="1">Horizontal</option>
+          <option value="2">Vertical</option>
+        </select>
+        <!-- <div style="width: 200px;"  class="input-group pb-1">
+          <input type="text" class="form-control" placeholder="" id="startpoint" value="">
+          <div class="input-group-append">
+            <span class="input-group-text">(x, y)
+            </span>
+          </div>
+        </div> -->
+        <button type="button" class="btn btn-primary mr-2" id="calc">Calculate</button>
+        <div class="" style="height: 500px;overflow-y: scroll;">
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col">Field</th>
+                <th scope="col">Name</th>
+                <th scope="col">Heading</th>
+                <th scope="col">A Latitude</th>
+                <th scope="col">A Longitude</th>
+                <th scope="col">Length</th>
+                <!-- <th scope="col"><i class="text-dark-50 ki ki-copy" title="Copy All" onclick="copyAll()"></i></th> -->
+            </tr>
+            </thead>
+            <tbody id="coordinate_table" style="font-size: 13px;">
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <span class="file-upload-status" style="opacity:1;" id="upload-status"></span>
+    </div>
+  </div>
+  <div id="viewDiv"></div>
+</body>
+</html>
